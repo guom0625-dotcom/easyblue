@@ -384,7 +384,7 @@ def _purge_audio_sdp():
                 remove = True
         elif remove and handle and "RecHandle" in line:
             # 다음 레코드 시작 — 이전 것 삭제
-            subprocess.run(["sudo", "sdptool", "del", handle],
+            subprocess.run(["sdptool", "del", handle],
                            capture_output=True)
             log.info(f"오디오 SDP 제거: {handle}")
             handle = None
@@ -404,17 +404,20 @@ def setup_hci1():
         ["hciconfig", "hci1", "name", "BT HID Bridge"],
     ]
     for cmd in cmds:
-        subprocess.run(["sudo"] + cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True)
 
     _purge_audio_sdp()
 
+    # 이미 root로 실행 중이므로 sudo 없이 호출
     result = subprocess.run(
-        ["sudo", "sdptool", "add", "HID"],
+        ["sdptool", "add", "HID"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        log.error(f"sdptool 실패: {result.stderr.strip()}")
-        log.error("bluetoothd --compat 미적용 상태입니다. setup.sh를 먼저 실행하세요.")
+        log.error(f"sdptool 실패 (rc={result.returncode})")
+        log.error(f"  stdout: {result.stdout.strip()}")
+        log.error(f"  stderr: {result.stderr.strip()}")
+        log.error("bluetoothd --compat 미적용 상태이거나 SDP 소켓 권한 문제입니다.")
         sys.exit(1)
     log.info("HID SDP 레코드 등록 완료")
 
