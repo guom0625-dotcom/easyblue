@@ -10,19 +10,50 @@ echo "=== 2단계: bluetoothd --compat 활성화 (sdptool 사용을 위해 필�
 OVERRIDE_DIR="/etc/systemd/system/bluetooth.service.d"
 OVERRIDE_FILE="$OVERRIDE_DIR/compat.conf"
 
-if ! grep -q "\-\-compat" /lib/systemd/system/bluetooth.service 2>/dev/null &&
-   ! [ -f "$OVERRIDE_FILE" ]; then
+# 실제 적용된 ExecStart 확인 (override 포함)
+BT_EXEC=$(systemctl cat bluetooth 2>/dev/null | grep "^ExecStart=" | tail -1)
+echo "현재 ExecStart: $BT_EXEC"
+
+if echo "$BT_EXEC" | grep -q "\-\-compat"; then
+    echo "이미 --compat 적용됨"
+else
     sudo mkdir -p "$OVERRIDE_DIR"
-    sudo tee "$OVERRIDE_FILE" > /dev/null <<'EOF'
+    # bluetoothd 경로 자동 탐지
+    BT_BIN=$(systemctl cat bluetooth 2>/dev/null | grep "^ExecStart=" | tail -1 | awk '{print $1}' | sed 's/ExecStart=//')
+    [ -z "$BT_BIN" ] && BT_BIN=$(which bluetoothd 2>/dev/null || echo "/usr/libexec/bluetooth/bluetoothd")
+    echo "bluetoothd 경로: $BT_BIN"
+    sudo tee "$OVERRIDE_FILE" > /dev/null <<EOF
 [Service]
 ExecStart=
-ExecStart=/usr/libexec/bluetooth/bluetoothd --compat
+ExecStart=$BT_BIN --compat
 EOF
     sudo systemctl daemon-reload
     sudo systemctl restart bluetooth
+    sleep 2
     echo "bluetoothd --compat 적용 완료"
+fi
+
+echo ""
+echo "=== 3-1단계: PulseAudio HSP 프로파일 비활성화 ==="
+# PulseAudio가 BlueZ에 HSP/HFP를 등록하지 않도록 설정
+PA_CONF="$HOME/.config/pulse/default.pa"
+mkdir -p "$HOME/.config/pulse"
+if [ ! -f "$PA_CONF" ] || ! grep -q "bluetooth-discover" "$PA_CONF"; then
+    # 시스템 기본값 복사 후 headset=ofono(없으면 비활성) 설정
+    cp /etc/pulse/default.pa "$PA_CONF" 2>/dev/null || cat > "$PA_CONF" <<'PAEOF'
+.include /etc/pulse/default.pa
+PAEOF
+    # headset 역할 제거: module-bluetooth-discover에서 headset 파라미터 추가
+    if grep -q "module-bluetooth-discover" "$PA_CONF"; then
+        sed -i 's/load-module module-bluetooth-discover$/load-module module-bluetooth-discover headset=ofono/' "$PA_CONF"
+    else
+        echo "load-module module-bluetooth-discover headset=ofono" >> "$PA_CONF"
+    fi
+    echo "PulseAudio bluetooth headset 비활성화 설정 완료"
+    echo "변경 적용: pulseaudio -k && pulseaudio --start"
+    pulseaudio -k 2>/dev/null; sleep 1; pulseaudio --start 2>/dev/null || true
 else
-    echo "이미 설정되어 있거나 불필요"
+    echo "이미 설정됨"
 fi
 
 echo ""

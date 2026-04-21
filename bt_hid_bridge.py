@@ -362,6 +362,40 @@ class InputBridge:
 
 
 # ── hci1 초기 설정 ────────────────────────────────────────────────────────────
+# PulseAudio가 HSP/HFP 레코드를 재등록할 수 있으므로 매 실행 시 정리 후 HID 등록
+AUDIO_SERVICE_CLASSES = {"0x1112", "0x111f", "0x1108", "0x110a", "0x110b"}
+
+def _purge_audio_sdp():
+    """로컬 SDP에서 HSP/HFP/A2DP 레코드를 찾아 삭제"""
+    result = subprocess.run(["sdptool", "browse", "local"],
+                            capture_output=True, text=True)
+    handle = None
+    remove = False
+    for line in result.stdout.splitlines():
+        if "RecHandle" in line:
+            handle = line.split()[-1]
+            remove = False
+        elif "Class ID" in line or "UUID" in line:
+            lower = line.lower()
+            if any(cls in lower for cls in AUDIO_SERVICE_CLASSES) or \
+               any(kw in lower for kw in ("headset", "handsfree", "audio gateway",
+                                          "a2dp", "avrcp", "0x1108", "0x1112",
+                                          "0x111e", "0x111f")):
+                remove = True
+        elif remove and handle and "RecHandle" in line:
+            # 다음 레코드 시작 — 이전 것 삭제
+            subprocess.run(["sudo", "sdptool", "del", handle],
+                           capture_output=True)
+            log.info(f"오디오 SDP 제거: {handle}")
+            handle = None
+            remove = False
+            handle = line.split()[-1]
+
+    if remove and handle:
+        subprocess.run(["sudo", "sdptool", "del", handle], capture_output=True)
+        log.info(f"오디오 SDP 제거: {handle}")
+
+
 def setup_hci1():
     cmds = [
         ["hciconfig", "hci1", "up"],
@@ -372,13 +406,17 @@ def setup_hci1():
     for cmd in cmds:
         subprocess.run(["sudo"] + cmd, check=True, capture_output=True)
 
+    _purge_audio_sdp()
+
     result = subprocess.run(
         ["sudo", "sdptool", "add", "--bdaddr", HCI1_ADDR, "HID"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        log.warning(f"sdptool 실패: {result.stderr.strip()}")
-        log.warning("bluetoothd --compat 가 필요할 수 있습니다. setup.sh 참조")
+        log.error(f"sdptool 실패: {result.stderr.strip()}")
+        log.error("bluetoothd --compat 미적용 상태입니다. setup.sh를 먼저 실행하세요.")
+        sys.exit(1)
+    log.info("HID SDP 레코드 등록 완료")
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
