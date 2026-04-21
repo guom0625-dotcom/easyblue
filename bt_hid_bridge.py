@@ -409,7 +409,7 @@ def setup_hci1():
     _purge_audio_sdp()
 
     result = subprocess.run(
-        ["sudo", "sdptool", "add", "--bdaddr", HCI1_ADDR, "HID"],
+        ["sudo", "sdptool", "add", "HID"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
